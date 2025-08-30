@@ -1,0 +1,73 @@
+image: atlassian/default-image:latest  # base image if not overridden
+
+options:
+  docker: true   # enable docker-in-docker
+
+pipelines:
+  branches:
+    main:
+      - step: *generate-version
+      - step: *build-admin
+      - step: *scan-admin
+
+definitions:
+  steps:
+    - step: &generate-version
+        name: Generate Version
+        image: atlassian/default-image:latest
+        script:
+          - VERSION="$(date +'%y.%m.%d').$BITBUCKET_BUILD_NUMBER"
+          - echo "GIT_TAG=$VERSION" >> version.env
+          - echo "Generated Version: $VERSION"
+        artifacts:
+          - version.env
+
+    - step: &build-admin
+        name: Build and Push Admin Image
+        image: docker:24.0.5
+        services:
+          - docker
+        script:
+          - export $(cat version.env | xargs)
+          - echo $BITBUCKET_TOKEN | docker login -u $DOCKERHUB_USERNAME --password-stdin $DOCKER_REGISTRY
+          - TAG_PREFIX="${BITBUCKET_BRANCH}"
+          - IMAGE_TAG="${TAG_PREFIX}-${GIT_TAG}"
+          - DOCKERFILE_PATH="src/admin/Dockerfile"
+
+          - echo "Changing latest tag to rollback tag..."
+          - docker pull "$DOCKER_REGISTRY/${BITBUCKET_REPO_SLUG}/admin_image:${TAG_PREFIX}-latest" || true
+          - docker tag "$DOCKER_REGISTRY/${BITBUCKET_REPO_SLUG}/admin_image:${TAG_PREFIX}-latest" "$DOCKER_REGISTRY/${BITBUCKET_REPO_SLUG}/admin_image:${TAG_PREFIX}-rollback" || true
+
+          - echo "Building Docker image..."
+          - docker build --cache-from="$DOCKER_REGISTRY/${BITBUCKET_REPO_SLUG}/admin_image:${TAG_PREFIX}-latest" \
+              -t "$DOCKER_REGISTRY/${BITBUCKET_REPO_SLUG}/admin_image:${IMAGE_TAG}" \
+              -t "$DOCKER_REGISTRY/${BITBUCKET_REPO_SLUG}/admin_image:${TAG_PREFIX}-latest" \
+              -f "$DOCKERFILE_PATH" .
+
+          - echo "Pushing Docker image..."
+          - docker push "$DOCKER_REGISTRY/${BITBUCKET_REPO_SLUG}/admin_image:${IMAGE_TAG}"
+          - docker push "$DOCKER_REGISTRY/${BITBUCKET_REPO_SLUG}/admin_image:${TAG_PREFIX}-latest"
+          - docker push "$DOCKER_REGISTRY/${BITBUCKET_REPO_SLUG}/admin_image:${TAG_PREFIX}-rollback" || true
+
+          - docker rmi -f "$DOCKER_REGISTRY/${BITBUCKET_REPO_SLUG}/admin_image:${IMAGE_TAG}" \
+                        "$DOCKER_REGISTRY/${BITBUCKET_REPO_SLUG}/admin_image:${TAG_PREFIX}-latest" \
+                        "$DOCKER_REGISTRY/${BITBUCKET_REPO_SLUG}/admin_image:${TAG_PREFIX}-rollback" || true
+        artifacts:
+          - version.env
+
+    - step: &scan-admin
+        name: Trivy Scan Admin Image
+        image: aquasec/trivy:latest
+        script:
+          - export $(cat version.env | xargs)
+          - TAG_PREFIX="${BITBUCKET_BRANCH}"
+          - IMAGE_TAG="${TAG_PREFIX}-${GIT_TAG}"
+          - echo "Scanning image: $DOCKER_REGISTRY/${BITBUCKET_REPO_SLUG}/admin_image:${IMAGE_TAG}"
+          - trivy image --exit-code 0 --ignore-unfixed --severity "CRITICAL,HIGH" "$DOCKER_REGISTRY/${BITBUCKET_REPO_SLUG}/admin_image:${IMAGE_TAG}"
+        artifacts:
+          - version.env
+
+definitions:
+  services:
+    docker:
+      memory: 2048
