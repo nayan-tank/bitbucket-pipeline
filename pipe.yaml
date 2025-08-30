@@ -1,0 +1,56 @@
+# Push image to Amazon ECR
+script:
+  - pipe: atlassian/aws-ecr-push-image:2.6.0
+    variables:
+      AWS_ACCESS_KEY_ID: '$AWS_ACCESS_KEY_ID' # Optional if already defined in the context.
+      AWS_SECRET_ACCESS_KEY: '$AWS_SECRET_ACCESS_KEY' # Optional if already defined in the context.
+      AWS_DEFAULT_REGION: 'us-east-1' # Optional if already defined in the context.
+      IMAGE_NAME: backend:v1
+---
+
+# Kubectl run command
+script:
+  - pipe: atlassian/kubectl-run:3.12.0
+    variables:
+      KUBE_CONFIG: $KUBE_CONFIG
+      KUBECTL_COMMAND: 'apply'
+      RESOURCE_PATH: 'nginx.yml'
+      DISABLE_VALIDATION: 'true'
+      LABELS:
+        - 'environment=production'
+        - 'tier=backend'
+      # KUBECTL_ARGS:
+      #   - '--v=9'
+      # KUBECTL_APPLY_ARGS: ''
+---
+
+# Firebase deploy 
+- parallel: # Deploying multiple sites at parallel steps
+  - step:
+    script:
+      - pipe: atlassian/firebase-deploy:5.1.1
+        variables:
+          FIREBASE_TOKEN: $FIREBASE_TOKEN
+          PROJECT_ID: 'myAwesomeProject'
+          MESSAGE: 'Deploying myAwesomeProject'
+          EXTRA_ARGS: '--only functions'
+          MULTI_SITES_CONFIG: >
+              [{
+                "TARGET": "my-application-target1",
+                "RESOURCE": "my-appropriate-resource"
+              }]
+          DEBUG: 'true'
+  - step:
+    script:
+      - pipe: atlassian/firebase-deploy:5.1.1
+        variables:
+          FIREBASE_TOKEN: $FIREBASE_TOKEN
+          PROJECT_ID: 'myAwesomeProject'
+          MESSAGE: 'Deploying myAwesomeProject'
+          EXTRA_ARGS: '--only functions'
+          MULTI_SITES_CONFIG: >
+              [{
+                "TARGET": "my-app-blog-target",
+                "RESOURCE": "resource1.blog.com resource2.blog.com"
+              }]
+          DEBUG: 'true'
