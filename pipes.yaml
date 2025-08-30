@@ -54,3 +54,19 @@ script:
                 "RESOURCE": "resource1.blog.com resource2.blog.com"
               }]
           DEBUG: 'true'
+---
+
+# Slack notify 
+script:
+  - pipe: atlassian/slack-notify:2.3.1
+    variables:
+      WEBHOOK_URL: $WEBHOOK_URL
+      MESSAGE: '"[${ENVIRONMENT_NAME}] build has exited with status $build_status"'
+
+# Use custom payload created with Slack Block Kit and modify payload with the envsubst program that substitutes the values of environment variables:
+script:
+  - envsubst < "payload.json.template" > "payload.json"
+  - pipe: atlassian/slack-notify:2.3.1
+    variables:
+      WEBHOOK_URL: $WEBHOOK_URL
+      PAYLOAD_FILE: payload.json
